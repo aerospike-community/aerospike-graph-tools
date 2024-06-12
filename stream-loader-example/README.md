@@ -10,10 +10,15 @@ IP_ADDRESS = "<ip_address>"
 
 ## Usage 
 `python3 incremental_load_example.py <mode> <bulk_load_id>`
+
 `mode`: `start`, `status`, `await`
+
 `bulk_load_id`: Only applicable for `status` and `await`
+
 Example of correct start usage: `python3 incremental_load_example.py start`
+
 Example of correct status usage: `python3 incremental_load_example.py status <uuid>`
+
 Example of correct await usage: `python3 incremental_load_example.py await <uuid>`
 
 ## Modes
