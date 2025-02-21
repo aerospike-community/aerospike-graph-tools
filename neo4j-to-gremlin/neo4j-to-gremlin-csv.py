@@ -1,4 +1,6 @@
 import sys, os, getopt, csv
+from process_queue import ProcessQueue
+
 
 def print_help():
     print("Expected arguments:\n"
@@ -74,72 +76,102 @@ def find_next_file(output_file_directory, file_name, is_vertex):
 
 
 def batch_process_input_files(input_file_list, output_directory):
+    process_queue = ProcessQueue()
     for input_file in input_file_list:
         print("Currently parsing input file:" + input_file)
-        with open(input_file, "r", newline='') as input_csv_file:
+        total_lines = 0
+        batch_size = 1000
+        vertex_headers = ["_id", "_labels"]
+        edge_headers = ["_id", "_type", "_start", "_end"]
+        with open(input_file, "r", newline='', buffering=batch_size) as input_csv_file:
             csv_reader = csv.reader(input_csv_file, delimiter=",", quotechar='"')
-            header = None
-            id_index = label_index = start_index = end_index = type_index = None
+            label_index = type_index = header = None
             reserved_neo4j_headers = ["_id", "_labels", "_start", "_end", "_type"]
-            vertex_files = {}
-            edge_files = {}
-            batch_size = 1000000
+            files_dict = {}
 
-            def write_headers(files_dict, headers, file_name, is_vertex):
-                files_dict[file_name] = {}
-                headers
-                output_file = find_next_file(output_directory, file_name, is_vertex)
-                print("Creating new output file: " + output_file)
-                files_dict[file_name]["file_handle"] = open(output_file, "w")
-                files_dict[file_name]["file_handle"].write(",".join(headers) + "\n")
-                files_dict[file_name]["written_lines"] = 1
-
-
-            def write_line(files_dict, headers, file_name, line, is_vertex, required_headers_in_order):
-                output_row = []
-                if file_name not in files_dict:
-                    write_headers(files_dict, headers, file_name, is_vertex)
-                for required_header in required_headers_in_order:
-                    output_row.append(line[header.index(required_header)] if required_header != "_labels" else
-                                      line[header.index(required_header)][1:])
-                for property_header in property_headers:
-                    output_row.append(line[header.index(property_header)])
-                files_dict[file_name]["file_handle"].write(",".join(output_row) + "\n")
-                files_dict[file_name]["written_lines"] += 1
-                if files_dict[file_name]["written_lines"] == batch_size:
-                    files_dict[file_name]["file_handle"].close()
-                    write_headers(files_dict, headers, file_name, is_vertex)
-
+            def create_file_if_not_exists(is_vertex, property_headers):
+                actual_directory = os.path.join(output_directory, "vertices" if is_vertex else "edges")
+                output_label = label
+                if ":" in label:
+                    output_label = label.split(":")[0] + "_" + label.split(":")[1]
+                if label == "":
+                    output_label = "vertex" if is_vertex else "edge"
+                if not os.path.exists(actual_directory):
+                    os.makedirs(actual_directory)
+                valid_file_path = os.path.join(actual_directory, str(output_label) + ".csv")
+                if files_dict.get(valid_file_path) is None:
+                    files_dict[valid_file_path] = {}
+                    files_dict[valid_file_path]["file_handle"] = open(valid_file_path, "w")
+                    if is_vertex:
+                        files_dict[valid_file_path]["file_handle"].write(",".join(vertex_headers) + "," + ",".join(property_headers) + "\n")
+                    else:
+                        files_dict[valid_file_path]["file_handle"].write(",".join(edge_headers) + "," + ",".join(property_headers) + "\n")
+                    files_dict[valid_file_path]["written_lines"] = 1
+                    files_dict[valid_file_path]["type"] = "vertex" if is_vertex else "edge"
+                    files_dict[valid_file_path]["rows"] = []
+                return valid_file_path
 
             # Rows are presented as a list, the header is the first list presented.
             for row in csv_reader:
+                total_lines += 1
+                if total_lines % 10_00_000 == 0:
+                    print("Processed " + str(total_lines) + " lines.")
+
                 if header is None:
                     header = row
                     id_index, label_index, start_index, end_index, type_index, property_headers = parse_header(header, reserved_neo4j_headers)
-                    vertex_headers = ["~id", "~label"] + property_headers
-                    edge_headers = ["~id", "~label", "~from", "~to"] + property_headers
                     continue
 
                 label, type = row[label_index], row[type_index]
-                if label != "":
-                    label = label[1:]
-                    write_line(vertex_files, vertex_headers, label, row, True, ["_id", "_labels"])
-                elif type != "":
-                    write_line(edge_files, edge_headers, type, row, False, ["_id", "_type", "_start", "_end"])
+                if type != "":
+                    relevant_headers = ["_id", "_type", "_start", "_end"]
+                    local_file_name = create_file_if_not_exists(False, property_headers)
                 else:
-                    print("Error, encountered invalid row that is neither a vertex or an edge: " + str(row))
+                    relevant_headers = ["_id", "_labels"]
+                    if label != "":
+                        label = label[1:]
+                    local_file_name = create_file_if_not_exists(True, property_headers)
 
-            for file_name in vertex_files:
-                vertex_files[file_name]["file_handle"].close()
+                #else:
+                #    print("Error, encountered invalid row that is neither a vertex or an edge: " + str(row))
+                #    sys.exit(1)
+                files_dict[local_file_name]["rows"].append(row)
+                if len(files_dict[local_file_name]["rows"]) == batch_size:
+                    # Submit to process queue
+                    process_queue.submit(files_dict, local_file_name, files_dict[local_file_name]["rows"], header,
+                                         relevant_headers, property_headers)
+                    print("Submitting " + str(batch_size) + " rows to process queue for " + local_file_name + ".")
+                    files_dict[local_file_name]["rows"] = []
 
-            for file_name in edge_files:
-                edge_files[file_name]["file_handle"].close()
+    for local_file_name in files_dict.keys():
+        if files_dict[local_file_name]["rows"] is not None:
+            print("Submitting " + str(
+                len(files_dict[local_file_name]["rows"])) + " rows to process queue for " + local_file_name + ".")
+            if files_dict["type"] == "vertex":
+                process_queue.submit(files_dict, local_file_name, files_dict[local_file_name]["rows"], header,
+                                     ["_id", "_labels"], property_headers)
+            else:
+                process_queue.submit(files_dict, local_file_name, files_dict[local_file_name]["rows"], header,
+                                     ["_id", "_type", "_start", "_end"], property_headers)
+
+    print("waiting for processing to complete")
+    failures = process_queue.get_failures()
+
+    for file_name in files_dict.keys():
+        files_dict[file_name]["file_handle"].close()
+
+    if len(failures) > 0:
+        print("Failed to process the following files:")
+        for failure in failures:
+            print(failure)
+        sys.exit(1)
 
 
 def main():
     input_directory, output_directory = parse_args()
     validate_arguments(input_directory, output_directory)
     input_files = enumerate_input_files(input_directory)
+    print("files: " + str(input_files))
     batch_process_input_files(input_files, output_directory)
 
 
