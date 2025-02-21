@@ -114,7 +114,7 @@ def batch_process_input_files(input_file_list, output_directory):
             # Rows are presented as a list, the header is the first list presented.
             for row in csv_reader:
                 total_lines += 1
-                if total_lines % 10_00_000 == 0:
+                if total_lines % 100_000 == 0:
                     print("Processed " + str(total_lines) + " lines.")
 
                 if header is None:
@@ -147,7 +147,7 @@ def batch_process_input_files(input_file_list, output_directory):
         if files_dict[local_file_name]["rows"] is not None:
             print("Submitting " + str(
                 len(files_dict[local_file_name]["rows"])) + " rows to process queue for " + local_file_name + ".")
-            if files_dict["type"] == "vertex":
+            if files_dict[local_file_name]["type"] == "vertex":
                 process_queue.submit(files_dict, local_file_name, files_dict[local_file_name]["rows"], header,
                                      ["_id", "_labels"], property_headers)
             else:
