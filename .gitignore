@@ -1,0 +1,10 @@
+#Intellij
+**/.attach_*
+.idea/
+.DS_Store
+
+#Visual Studio
+.vs
+
+#Python work files
+__pycache__/

@@ -81,8 +81,8 @@ def batch_process_input_files(input_file_list, output_directory):
         print("Currently parsing input file:" + input_file)
         total_lines = 0
         batch_size = 1000
-        vertex_headers = ["_id", "_labels"]
-        edge_headers = ["_id", "_type", "_start", "_end"]
+        vertex_headers = ["~id", "~label"]
+        edge_headers = ["~id", "~label", "~from", "~to"]
         with open(input_file, "r", newline='', buffering=batch_size) as input_csv_file:
             csv_reader = csv.reader(input_csv_file, delimiter=",", quotechar='"')
             label_index = type_index = header = None
